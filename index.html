@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>水果系统</title>
+
+<style>
+body { font-family: Arial; text-align: center; background:#f5f5f5; }
+.page { display:none; padding:20px; }
+.active { display:block; }
+
+button { padding:15px; font-size:18px; margin:10px; }
+.bigbtn { width:80%; font-size:22px; }
+
+.disabled {
+  background: #ccc !important;
+  color: #666 !important;
+}
+
+.success { color: green; }
+.error { color: red; }
+</style>
+</head>
+
+<body>
+
+<div id="home" class="page active">
+  <h1>🍎 水果系统</h1>
+  <button class="bigbtn" onclick="showPage('input')">📥 录入数据</button><br>
+  <button class="bigbtn" onclick="showPage('stats')">📊 查看统计</button>
+</div>
+
+<div id="input" class="page">
+  <button onclick="showPage('home')">⬅ 返回</button>
+
+  <h2>🍎 录入</h2>
+
+  <input id="staff" placeholder="请输入员工姓名"><br><br>
+
+  <select id="store"></select><br><br>
+
+  <input id="search" placeholder="搜索水果" oninput="filterFruits()"><br><br>
+
+  <select id="fruit"></select><br><br>
+
+  <input id="amountInput" type="number" placeholder="数量"><br><br>
+
+  <button id="submitBtn" onclick="submitData()">提交</button>
+
+  <p id="msg"></p>
+</div>
+
+<div id="stats" class="page">
+  <button onclick="showPage('home')">⬅ 返回</button>
+
+  <h2>📊 统计</h2>
+
+  <select id="store2" onchange="renderStats()"></select><br><br>
+
+  <input type="date" id="date" onchange="renderStats()"><br><br>
+
+  <button onclick="exportExcel()">导出Excel</button><br><br>
+
+  <ul id="list"></ul>
+</div>
+
+<script>
+const URL = "https://lhtrajeswpwbbrlmdkvn.supabase.co";
+const KEY = "sb_publishable_OdFwikDnBjYkYll9gJpqzQ_pT__Qb44";
+
+let fruits=[],records=[],stores=[];
+let canSubmit = true;
+
+function showPage(id){
+  document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
+  document.getElementById(id).classList.add("active");
+}
+
+// 加载数据
+async function load(){
+  fruits = await (await fetch(URL+"/rest/v1/fruits",{headers:{apikey:KEY,Authorization:"Bearer "+KEY}})).json();
+  stores = await (await fetch(URL+"/rest/v1/stores",{headers:{apikey:KEY,Authorization:"Bearer "+KEY}})).json();
+  await loadRecords();
+  initSelects();
+
+  let saved = localStorage.getItem("staff");
+  if (saved) staff.value = saved;
+}
+
+async function loadRecords(){
+  records = await (await fetch(URL+"/rest/v1/records",{headers:{apikey:KEY,Authorization:"Bearer "+KEY}})).json();
+}
+
+// 初始化
+function initSelects(){
+  store.innerHTML=""; store2.innerHTML="";
+
+  stores.forEach(s=>{
+    store.add(new Option(s.name,s.id));
+    store2.add(new Option(s.name,s.id));
+  });
+
+  store2.add(new Option("所有店",""),0);
+
+  renderFruits(fruits);
+  date.value = new Date().toISOString().slice(0,10);
+}
+
+// 搜索水果
+function renderFruits(list){
+  fruit.innerHTML="";
+  list.forEach(f=>fruit.add(new Option(f.name,f.id)));
+}
+function filterFruits(){
+  renderFruits(fruits.filter(f=>f.name.includes(search.value)));
+}
+
+// 🔊 电梯音
+function playBeep(){
+  let ctx=new (window.AudioContext||window.webkitAudioContext)();
+  let o1=ctx.createOscillator(), g1=ctx.createGain();
+  o1.frequency.value=900;
+  g1.gain.setValueAtTime(0.3,ctx.currentTime);
+  g1.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.25);
+  o1.connect(g1); g1.connect(ctx.destination);
+
+  let o2=ctx.createOscillator(), g2=ctx.createGain();
+  o2.frequency.setValueAtTime(500,ctx.currentTime+0.25);
+  g2.gain.setValueAtTime(0.3,ctx.currentTime+0.25);
+  g2.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.6);
+  o2.connect(g2); g2.connect(ctx.destination);
+
+  o1.start(); o1.stop(ctx.currentTime+0.25);
+  o2.start(ctx.currentTime+0.25); o2.stop(ctx.currentTime+0.6);
+}
+
+// 📳 震动
+function vibrate(){ if(navigator.vibrate) navigator.vibrate(200); }
+
+// 离线存储
+function saveOffline(data){
+  let list=JSON.parse(localStorage.getItem("offline")||"[]");
+  list.push(data);
+  localStorage.setItem("offline",JSON.stringify(list));
+}
+
+// 自动同步
+async function syncOffline(){
+  let list=JSON.parse(localStorage.getItem("offline")||"[]");
+  if(!list.length) return;
+
+  for(let item of list){
+    await fetch(URL+"/rest/v1/records",{
+      method:"POST",
+      headers:{apikey:KEY,Authorization:"Bearer "+KEY,"Content-Type":"application/json"},
+      body:JSON.stringify(item)
+    });
+  }
+
+  localStorage.removeItem("offline");
+  await loadRecords();
+}
+window.addEventListener("online",syncOffline);
+
+// 🚀 提交（含失败倒计时）
+async function submitData(){
+  if(!canSubmit) return;
+
+  let staffName = staff.value.trim();
+  if(!staffName){
+    showError("❌ 请填写员工姓名");
+    return;
+  }
+
+  localStorage.setItem("staff",staffName);
+
+  let data={
+    staff: staffName,
+    store_id:Number(store.value),
+    fruit_id:Number(fruit.value),
+    amount:Number(amountInput.value),
+    date:new Date().toISOString().slice(0,10),
+    unit:"斤"
+  };
+
+  if(!navigator.onLine){
+    saveOffline(data);
+    showError("📴 已离线保存，联网后自动上传");
+    return;
+  }
+
+  let res=await fetch(URL+"/rest/v1/records",{
+    method:"POST",
+    headers:{apikey:KEY,Authorization:"Bearer "+KEY,"Content-Type":"application/json"},
+    body:JSON.stringify(data)
+  });
+
+  if(res.ok){
+    playBeep(); vibrate();
+    canSubmit=false; submitBtn.classList.add("disabled");
+
+    let s=3;
+    msg.className="success";
+
+    msg.innerText=`✅ 提交成功（请等待倒计时结束再添加）\n${s} 秒`;
+
+    let t=setInterval(()=>{
+      s--;
+      msg.innerText=`✅ 提交成功（请等待倒计时结束再添加）\n${s} 秒`;
+
+      if(s<=0){
+        clearInterval(t);
+        msg.innerText="";
+        canSubmit=true;
+        submitBtn.classList.remove("disabled");
+        amountInput.value="";
+      }
+    },1000);
+
+    await loadRecords();
+
+  }else{
+    showError("❌ 提交失败（网络或配置问题）");
+  }
+}
+
+// ❌ 错误提示（红字+3秒消失）
+function showError(text){
+  msg.className="error";
+  msg.innerText=text;
+
+  setTimeout(()=>{
+    msg.innerText="";
+  },3000);
+}
+
+// 统计
+function renderStats(){
+  let map={};
+
+  records.forEach(r=>{
+    if((!store2.value||r.store_id==store2.value)&&(!date.value||r.date==date.value)){
+      map[r.fruit_id]=(map[r.fruit_id]||0)+r.amount;
+    }
+  });
+
+  list.innerHTML="";
+  fruits.forEach(f=>{
+    if(map[f.id]){
+      let li=document.createElement("li");
+      li.innerText=f.name+"："+map[f.id];
+      list.appendChild(li);
+    }
+  });
+}
+
+// 导出
+function exportExcel(){
+  let rows=[["水果","数量"]];
+  document.querySelectorAll("#list li").forEach(li=>{
+    let t=li.innerText.split("：");
+    rows.push([t[0],t[1]]);
+  });
+
+  let csv="data:text/csv;charset=utf-8,\uFEFF"+rows.map(r=>r.join(",")).join("\n");
+  let a=document.createElement("a");
+  a.href=encodeURI(csv);
+  a.download="统计.csv";
+  a.click();
+}
+
+load();
+</script>
+
+</body>
+</html>
